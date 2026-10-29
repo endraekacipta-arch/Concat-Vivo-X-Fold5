@@ -9,7 +9,7 @@ permissions:
 jobs:
   android:
     name: Android ARM64
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 90
     env:
       CARGO_BUILD_JOBS: 2
@@ -56,6 +56,7 @@ jobs:
         run: |
           set -euo pipefail
           eval "$(scripts/mobile-env.sh aarch64-linux-android)"
+          export LIBCLANG_PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib"
           resource_dir=$("$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" -print-resource-dir)
           export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="$BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android -resource-dir=$resource_dir"
           # The speech runtime bundles ORT 1.27.1, which supports API 27
