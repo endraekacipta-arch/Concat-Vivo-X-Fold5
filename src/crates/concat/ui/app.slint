@@ -211,7 +211,7 @@ export component App inherits Window {
     // start eating each other. The phone shell has no columns, and a phone
     // is narrower than this on every side.
     min-width: root.phone ? 320px : 900px;
-    min-height: root.phone ? 480px : 560px;
+    min-height: root.phone ? 320px : 560px;
     // So the shortcuts work before anything has been clicked. Without it the
     // window opens with nothing focused, and a key would have nowhere to be
     // delivered from until the first press landed somewhere.
@@ -294,7 +294,7 @@ export component App inherits Window {
     in property <string> project-name: I18n.t("common.untitledProject");
     in property <string> project-status: I18n.t("common.saved");
     in property <bool> macos;
-    /// The window is a phone's: one screen, held upright, driven by a
+    /// The window is a phone's: a resizable touch surface, driven by a
     /// finger. The editor is then the phone shell (ui/phone/) - no title
     /// strip, no dock - and the launch screen carries its own verbs, as it
     /// does whenever it is narrow. Set once from Rust; see platform::phone.

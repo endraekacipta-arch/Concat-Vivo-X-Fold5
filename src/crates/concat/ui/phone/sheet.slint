@@ -20,6 +20,11 @@ import { PhoneScroll } from "controls.slint";
 export component PhoneSheet inherits Rectangle {
     in property <bool> open;
     in property <string> title;
+    /// A tool panel beside the preview on an expanded or landscape window.
+    /// Its bounds exclude the preview and timeline, so both remain usable.
+    in property <bool> docked;
+    changed docked => { root.drag = 0px; }
+    changed open => { root.drag = 0px; }
     /// How much of the screen the sheet takes: enough for a panel, with
     /// the monitor still in view above it.
     in property <length> sheet-height: root.height * 0.6;
@@ -37,7 +42,7 @@ export component PhoneSheet inherits Rectangle {
 
     // What is left above the sheet. A tap there is a dismissal; declared
     // first, so the surface takes its own presses.
-    TouchArea {
+    if !root.docked: TouchArea {
         clicked => { root.closed(); }
     }
 
@@ -47,8 +52,8 @@ export component PhoneSheet inherits Rectangle {
         width: root.width;
         height: root.sheet-height;
         background: Theme.panel;
-        border-top-left-radius: Theme.r-xl;
-        border-top-right-radius: Theme.r-xl;
+        border-top-left-radius: root.docked ? Theme.r : Theme.r-xl;
+        border-top-right-radius: root.docked ? Theme.r : Theme.r-xl;
         border-width: 1px;
         border-color: Theme.line-strong;
         clip: true;
@@ -69,6 +74,7 @@ export component PhoneSheet inherits Rectangle {
                 // which is declared later and takes its own presses.
                 // https://github.com/jub0t/Concat/issues/221
                 grab := TouchArea {
+                    enabled: !root.docked;
                     property <length> origin;
                     pointer-event(event) => {
                         if (event.kind == PointerEventKind.down) {
@@ -101,6 +107,7 @@ export component PhoneSheet inherits Rectangle {
                 Rectangle {
                     x: (parent.width - self.width) / 2;
                     y: 6px;
+                    visible: !root.docked;
                     width: 36px;
                     height: 4px;
                     border-radius: 2px;

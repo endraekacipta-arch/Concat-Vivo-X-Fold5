@@ -1,0 +1,87 @@
+name: Build Vivo X Fold 5 APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android ARM64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 2
+      GGML_NATIVE: "OFF"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Read pinned Rust version
+        id: rust
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' src/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: ${{ steps.rust.outputs.channel }}
+          targets: aarch64-linux-android
+      - uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389
+        with:
+          tool: cargo-apk
+      - name: Android SDK and build libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libclang-dev
+          sdkmanager "ndk;28.2.13676358" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - uses: actions/cache@v4
+        with:
+          path: src/vendor/ffmpeg/aarch64-linux-android
+          key: vivo-ffmpeg-arm64-${{ hashFiles('src/scripts/ffmpeg-mobile.sh') }}
+      - name: FFmpeg
+        run: |
+          if [ ! -f src/vendor/ffmpeg/aarch64-linux-android/lib/libavcodec.a ]; then
+            src/scripts/ffmpeg-mobile.sh aarch64-linux-android
+          fi
+      - name: Speech runtime
+        run: src/scripts/sherpa-mobile.sh aarch64-linux-android
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: src
+          key: vivo-android-arm64
+      - name: Build signed APK
+        working-directory: src
+        run: |
+          set -euo pipefail
+          eval "$(scripts/mobile-env.sh aarch64-linux-android)"
+          resource_dir=$("$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" -print-resource-dir)
+          export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="$BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android -resource-dir=$resource_dir"
+          # The speech runtime bundles ORT 1.27.1, which supports API 27
+          # and supplies the symbol version the speech library requires.
+          export ORT_LIB_LOCATION="$SHERPA_ONNX_LIB_DIR"
+          export ORT_PREFER_DYNAMIC_LINK=1
+          export CARGO_APK_RELEASE_KEYSTORE="$RUNNER_TEMP/vivo.keystore"
+          export CARGO_APK_RELEASE_KEYSTORE_PASSWORD=concat
+          keytool -genkeypair -keystore "$CARGO_APK_RELEASE_KEYSTORE" -storepass concat -keypass concat \
+            -alias concat -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Concat Vivo Local Build"
+          cargo apk build --release -p concat-android --target aarch64-linux-android
+      - name: Verify and stage APK
+        run: |
+          set -euo pipefail
+          apk=src/target/release/apk/Concat.apk
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          "$tools/apksigner" verify --verbose --print-certs "$apk"
+          "$tools/zipalign" -c -P 16 4 "$apk"
+          python3 scripts/ci/check-16k-pages.py "$apk"
+          "$tools/aapt" dump badging "$apk"
+          mkdir -p stage
+          cp "$apk" stage/Concat-Vivo-X-Fold5-arm64.apk
+          cd stage
+          sha256sum Concat-Vivo-X-Fold5-arm64.apk > Concat-Vivo-X-Fold5-arm64.apk.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: Concat-Vivo-X-Fold5-arm64
+          path: stage/*
+          if-no-files-found: error

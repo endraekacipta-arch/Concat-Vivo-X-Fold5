@@ -24,31 +24,16 @@ import { PhoneSheet } from "sheet.slint";
 import { PhoneCanvas } from "canvas.slint";
 import { Sounds, SoundList, VoiceList } from "../workspace/audio-page.slint";
 
-// The editor as a phone shows it: one screen, held upright, driven by a
-// finger. Shown in place of the title strip and the dock wherever the
-// window is a phone's - see `App.phone` and `platform::phone` - and never
-// beside them: the desk's layout is the desk's, and this one is not a
-// squeezed copy of it but the shape every phone editor has arrived at,
-// because a thumb and a portrait screen leave no other.
+// Touch editor for both the cover and inner display of a foldable.
+// Compact windows stack the preview, transport, timeline and tools. Expanded
+// windows keep tools beside the preview; short landscape windows put the
+// timeline beside it too. Breakpoints use logical window size (after safe
+// insets), never device pixels or a model name, so split screen works too.
+// This component stays alive across size changes: selection, the open tool,
+// media picks and timeline gestures still belong to the same editor.
 //
-// Top to bottom:
-//
-//   - a bar with the way out, the project's name, Settings and Export;
-//   - the monitor, which takes whatever height the rest leaves;
-//   - the transport: where the playhead is, a frame back, Play, a frame
-//     on, undo and redo;
-//   - the lanes, with the playhead held at their middle and the cut
-//     sliding under it - a drag scrubs and a throw glides on, two fingers
-//     pinch the zoom, a tap on a clip selects it where it is, a tap on
-//     empty lane lets go, a clip dragged moves (see `finger` in
-//     lanes.slint, `centred` in the timeline pane on the Rust side, and
-//     the glide beside it);
-//   - the bar of tools. With nothing selected it is the library's pages
-//     and the project's verbs; with a clip selected it is the clip's
-//     verbs, with a way back at its head.
-//
-// Every tool that has more to say than a press opens a sheet over the
-// lanes and the bar (sheet.slint) holding the same panel the desk shows
+// Every tool that has more to say than a press opens a bottom sheet or
+// side panel (sheet.slint) holding the same panel the desk shows
 // for it - the inspector's page, the library's shelf - so the phone and
 // the desk edit through one set of controls and one set of callbacks.
 // Everything read and everything reported goes through the Editor global,
@@ -448,30 +433,38 @@ export component PhoneEditor inherits Rectangle {
 
     background: Theme.page;
 
-    // Placed rather than laid out. The lanes take a share of the screen's
-    // height, and a layout that read the height of the thing it is sizing
-    // is a binding loop - the launch screen has the same note. Five rows,
-    // each at a height of its own: the bar and the lanes are measured up
-    // from the foot, the top bar and the transport down from the head, and
-    // the monitor is what is left between.
+    // Geometry depends only on the available window, never on a child's
+    // preferred size. Keep one instance of each pane across fold/unfold.
+    property <bool> landscape-split: root.width >= 720px && root.height < 520px;
+    property <bool> side-tools: (root.width >= 600px && root.height >= 520px)
+        || root.landscape-split;
     property <length> top-h: 48px;
     property <length> transport-h: 60px;
-    /// A third of the screen, and never less than a ruler and two lanes.
-    property <length> lanes-h: Math.max(170px, root.height * 0.3);
     property <length> bar-h: 74px;
-    property <length> lanes-y: root.height - root.bar-h - root.lanes-h;
-    property <length> transport-y: root.lanes-y - root.transport-h;
-    /// How tall the sheet is when one is up. The bin's is lower: it is a
-    /// grid to pick from, and the picture is what the picks are judged in.
-    property <length> sheet-h: root.sheet == "media" ? root.height * 0.52 : root.height * 0.6;
-    /// The foot of the monitor: the transport's head, or the sheet's while
-    /// one is up - the monitor shrinks to the room left above the sheet
-    /// rather than going under it, so the whole picture stays in view
-    /// while a sheet works on it.
-    property <length> monitor-foot: root.sheet != ""
+    property <length> content-bottom: root.height - root.bar-h;
+    property <length> lanes-x: root.landscape-split ? root.width * 0.5 : 0px;
+    property <length> lanes-h: root.landscape-split
+        ? root.content-bottom - root.top-h
+        : Math.min(Math.max(120px, root.height * 0.3),
+            Math.max(0px, root.content-bottom - root.top-h - root.transport-h - 80px));
+    property <length> lanes-y: root.landscape-split
+        ? root.top-h : root.content-bottom - root.lanes-h;
+    property <length> transport-y: root.landscape-split
+        ? root.content-bottom - root.transport-h : root.lanes-y - root.transport-h;
+    property <length> tool-w: root.landscape-split ? root.width - root.lanes-x
+        : Math.min(360px, Math.max(280px, root.width * 0.4));
+    property <length> tool-x: root.side-tools ? root.width - root.tool-w : 0px;
+    property <length> tool-y: root.side-tools ? root.top-h : 0px;
+    property <length> tool-area-h: root.side-tools
+        ? (root.landscape-split ? root.content-bottom : root.transport-y) - root.top-h
+        : root.height;
+    property <length> sheet-h: root.side-tools ? root.tool-area-h
+        : root.sheet == "media" ? root.height * 0.52 : root.height * 0.6;
+    property <length> monitor-w: root.landscape-split ? root.lanes-x
+        : root.side-tools && root.sheet != "" ? root.tool-x : root.width;
+    property <length> monitor-foot: root.sheet != "" && !root.side-tools
         ? Math.min(root.transport-y, root.height - root.sheet-h)
         : root.transport-y;
-    /// The Add bar under the bin while something is picked.
     property <length> add-bar-h: 68px;
 
     // ── the top bar ──────────────────────────────────────────────────
@@ -575,7 +568,7 @@ export component PhoneEditor inherits Rectangle {
     Rectangle {
         x: 0;
         y: root.top-h;
-        width: root.width;
+        width: root.monitor-w;
         height: Math.max(0px, root.monitor-foot - root.top-h);
 
         monitor := PreviewPane {
@@ -642,7 +635,7 @@ export component PhoneEditor inherits Rectangle {
     Rectangle {
         x: 0;
         y: root.transport-y;
-        width: root.width;
+        width: root.landscape-split ? root.lanes-x : root.width;
         height: root.transport-h;
 
         HorizontalLayout {
@@ -748,9 +741,9 @@ export component PhoneEditor inherits Rectangle {
     // No lane headers: a lane is untyped and its switches are the desk's
     // business; the clips are the whole of what a thumb needs here.
     stack := Rectangle {
-        x: 0;
+        x: root.lanes-x;
         y: root.lanes-y;
-        width: root.width;
+        width: root.width - root.lanes-x;
         height: root.lanes-h;
 
         // The stack scrolls here rather than in Rust, as it does in the
@@ -1194,10 +1187,11 @@ export component PhoneEditor inherits Rectangle {
     // library's pages close themselves once something is placed, so what
     // was placed is seen, and the inspector's stay up to be worked in.
     sheet := PhoneSheet {
-        x: 0;
-        y: 0;
-        width: root.width;
-        height: root.height;
+        x: root.tool-x;
+        y: root.tool-y;
+        width: root.side-tools ? root.tool-w : root.width;
+        height: root.tool-area-h;
+        docked: root.side-tools;
         sheet-height: root.sheet-h;
         open: root.sheet != "";
         title: root.sheet-title(root.sheet);
@@ -1647,9 +1641,9 @@ export component PhoneEditor inherits Rectangle {
     // grid rather than in its scroll, so it is under the thumb however far
     // down the picks are; it follows the sheet when the sheet is dragged.
     if root.sheet == "media" && Editor.media-selected-count > 0: Rectangle {
-        x: 0;
-        y: root.height - root.add-bar-h + sheet.drag;
-        width: root.width;
+        x: root.tool-x;
+        y: root.tool-y + root.tool-area-h - root.add-bar-h + sheet.drag;
+        width: root.side-tools ? root.tool-w : root.width;
         height: root.add-bar-h;
         background: Theme.panel;
 

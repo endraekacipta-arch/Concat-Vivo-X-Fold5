@@ -29,7 +29,7 @@ fn main() {
         .spawn(|| {
             let config = slint_build::CompilerConfiguration::new()
                 .embed_resources(slint_build::EmbedResourcesKind::EmbedFiles);
-            slint_build::compile_with_config("ui/app.slint", config)
+            slint_build::compile_with_config(ui_source(), config)
         })
         .expect("could not start the Slint compiler thread");
     compile
@@ -153,4 +153,68 @@ fn main() {
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
         .unwrap_or_else(|| "unknown".into());
     println!("cargo:rustc-env=BUILD_RUSTC={version}");
+}
+
+/// Android always uses the touch shell. Exclude the desktop workspace from
+/// its generated UI and make the touch mode constant on this target. Keep
+/// the public `phone` property for the shared host API.
+fn ui_source() -> std::path::PathBuf {
+    let ui =
+        std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"))
+            .join("ui");
+    let original = ui.join("app.slint");
+    println!("cargo:rerun-if-changed={}", original.display());
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("android") {
+        return original;
+    }
+
+    let mut source = std::fs::read_to_string(&original).expect("read app.slint");
+    // Slint retains component types even in a constant-false conditional.
+    // Remove the two desktop-only component instances before generation.
+    for marker in [
+        "if !root.phone: TitleBar {",
+        "if !root.on-start && !root.phone: Workspace {",
+    ] {
+        let start = source.find(marker).expect("desktop UI instance");
+        let opening = start + marker.len() - 1;
+        let mut depth = 0;
+        let mut end = None;
+        for (offset, ch) in source[opening..].char_indices() {
+            if ch == '{' {
+                depth += 1;
+            } else if ch == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(opening + offset + 1);
+                    break;
+                }
+            }
+        }
+        source.replace_range(start..end.expect("desktop UI closing brace"), "");
+    }
+    // The generated file lives in OUT_DIR. Resolve only this file's imports
+    // and icon against its original directory; imported components keep
+    // resolving their own resources relative to their original files.
+    let source = source
+        .lines()
+        .map(|line| {
+            let is_path = line.trim_start().starts_with("import \"")
+                || line.contains("from \"")
+                || line.contains("@image-url(\"");
+            let line = if is_path {
+                let start = line.find('"').expect("path opening quote");
+                let end = start + 1 + line[start + 1..].find('"').expect("path closing quote");
+                let path = ui.join(&line[start + 1..end]);
+                line.replacen(&line[start..=end], &format!("{path:?}"), 1)
+            } else {
+                line.to_owned()
+            };
+            line.replace("root.phone", "true")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let generated = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"))
+        .join("android-app.slint");
+    std::fs::write(&generated, source).expect("write Android UI");
+    generated
 }
